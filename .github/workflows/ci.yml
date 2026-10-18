@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Node.js ${{ matrix.node-version }} tests
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Check JavaScript syntax
+        run: |
+          node --check src/index.js
+          node --check src/deploy-commands.js
+          node --check src/utils.js
+
+      - name: Check shell scripts
+        run: bash -n scripts/*.sh
+
+      - name: Check whitespace errors
+        run: git diff --check
+
+  compose:
+    name: Compose and Docker validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Create CI environment file
+        run: |
+          cat > .env <<'EOF'
+          DISCORD_TOKEN=ci-placeholder-token
+          CLIENT_ID=000000000000000000
+          GUILD_ID=000000000000000000
+          VOICEVOX_URL=http://voicevox:50021
+          DEFAULT_SPEAKER=3
+          PORT=3000
+          HEALTH_PORT=3000
+          DATA_DIR=/app/data
+          COMPOSE_PROJECT_NAME=discord-voicevox-yomiage-ci
+          VV_CPU_NUM_THREADS=2
+          VOICEVOX_BASE_IMAGE=voicevox/voicevox_engine:cpu-latest
+          EOF
+
+      - name: Validate Compose configuration
+        run: docker compose config --quiet
+
+      - name: Build Bot image
+        run: docker build --tag discord-voicevox-yomiage:ci .
