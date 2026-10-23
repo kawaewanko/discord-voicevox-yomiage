@@ -1,11 +1,13 @@
 require("dotenv").config();
 
 const http = require("node:http");
+const fs = require("node:fs/promises");
 const path = require("node:path");
 const {
   Client,
   GatewayIntentBits,
   Events,
+  ActivityType,
   MessageFlags,
   EmbedBuilder,
   PermissionFlagsBits,
@@ -24,6 +26,7 @@ const {
 const { Readable } = require("node:stream");
 const prism = require("prism-media");
 const { MAX_QUEUE_LENGTH, createSettingsStore, normalizeText } = require("./utils");
+const { version: BOT_VERSION } = require("../package.json");
 
 const TOKEN = process.env.DISCORD_TOKEN;
 const VOICEVOX_URL = (process.env.VOICEVOX_URL || "http://127.0.0.1:50021").replace(/\/$/, "");
@@ -31,6 +34,14 @@ const DEFAULT_SPEAKER = Number.parseInt(process.env.DEFAULT_SPEAKER || "3", 10);
 const PORT = Number.parseInt(process.env.PORT || "3000", 10);
 const DATA_DIR = process.env.DATA_DIR || path.join(process.cwd(), "data");
 const SETTINGS_FILE = path.join(DATA_DIR, "guild-settings.json");
+const MAINTENANCE_STATE_FILE =
+  process.env.MAINTENANCE_STATE_FILE || path.join(DATA_DIR, "maintenance-state.json");
+const ENV_MAINTENANCE_MODE = /^(1|true|yes|on)$/i.test(process.env.MAINTENANCE_MODE || "false");
+const DEFAULT_MAINTENANCE_MESSAGE =
+  process.env.MAINTENANCE_MESSAGE ||
+  "現在メンテナンス中のため、読み上げ機能を停止しています。しばらくお待ちください。";
+let maintenanceMode = ENV_MAINTENANCE_MODE;
+let maintenanceMessage = DEFAULT_MAINTENANCE_MESSAGE;
 
 if (!TOKEN) throw new Error(".env に DISCORD_TOKEN を設定してください。");
 if (!Number.isInteger(PORT) || PORT < 0 || PORT > 65535)
@@ -50,6 +61,67 @@ const guildPlayers = new Map();
 const processingGuilds = new Set();
 const queueGenerations = new Map();
 let httpServer;
+let presenceTimer;
+let maintenanceTimer;
+
+function getLatencyMs() {
+  return Number.isFinite(client.ws.ping) ? Math.max(0, Math.round(client.ws.ping)) : 0;
+}
+
+function updatePresence() {
+  if (!client.user) return;
+  const latency = getLatencyMs();
+  const activityName = maintenanceMode
+    ? `メンテナンス中 | /help | v${BOT_VERSION}`
+    : `/help | ${latency} ms | v${BOT_VERSION}`;
+  client.user.setPresence({
+    activities: [{ name: activityName, type: ActivityType.Watching }],
+    status: "online",
+  });
+}
+
+async function refreshMaintenanceState() {
+  try {
+    const state = JSON.parse(await fs.readFile(MAINTENANCE_STATE_FILE, "utf8"));
+    if (typeof state.enabled !== "boolean") return;
+    const nextMessage =
+      typeof state.message === "string" && state.message.trim()
+        ? state.message
+        : maintenanceMessage;
+    if (maintenanceMode !== state.enabled || maintenanceMessage !== nextMessage) {
+      maintenanceMode = state.enabled;
+      maintenanceMessage = nextMessage;
+      updatePresence();
+      console.log(`共有メンテナンス状態を更新しました: ${maintenanceMode ? "有効" : "無効"}`);
+    }
+  } catch (error) {
+    if (error.code !== "ENOENT")
+      console.warn(`メンテナンス状態を読み込めませんでした: ${error.message}`);
+  }
+}
+
+async function saveMaintenanceState(enabled, message, updatedBy) {
+  const state = {
+    enabled,
+    message: message || DEFAULT_MAINTENANCE_MESSAGE,
+    updatedAt: new Date().toISOString(),
+    updatedBy,
+  };
+  await fs.mkdir(path.dirname(MAINTENANCE_STATE_FILE), { recursive: true });
+  const temporary = `${MAINTENANCE_STATE_FILE}.tmp`;
+  await fs.writeFile(temporary, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+  await fs.rename(temporary, MAINTENANCE_STATE_FILE);
+  maintenanceMode = state.enabled;
+  maintenanceMessage = state.message;
+  updatePresence();
+}
+
+function maintenanceReply(interaction) {
+  return embedReply(interaction, "メンテナンス中", maintenanceMessage, {
+    ephemeral: true,
+    color: 0xfee75c,
+  });
+}
 
 function getSettings(guildId) {
   return settingsStore.get(guildId);
@@ -236,17 +308,31 @@ function embedEdit(interaction, title, description, color) {
   return interaction.editReply({ embeds: [makeEmbed(title, description, color)] });
 }
 function publicError() {
-  return "処理に失敗しました。VOICEVOXが起動しているか、Botの権限を確認してください。";
+  return "処理に失敗しました。VOICEVOXの起動状態、Botの権限、チャンネル設定を確認してください。詳細はBotのログを確認してください。";
 }
 
 client.once(Events.ClientReady, (readyClient) => {
+  updatePresence();
+  presenceTimer = setInterval(updatePresence, 30_000);
+  presenceTimer.unref?.();
+  maintenanceTimer = setInterval(() => void refreshMaintenanceState(), 5_000);
+  maintenanceTimer.unref?.();
   console.log(`ログインしました: ${readyClient.user.tag}`);
+  console.log(
+    `プレゼンス: 視聴中 ${
+      maintenanceMode
+        ? `メンテナンス中 | /help | v${BOT_VERSION}`
+        : `/help | ${getLatencyMs()} ms | v${BOT_VERSION}`
+    }`,
+  );
+  if (maintenanceMode)
+    console.log("メンテナンスモード: 読み上げ・接続・設定変更を停止しています。");
   console.log(`VOICEVOX API: ${VOICEVOX_URL}`);
   console.log(`設定ファイル: ${SETTINGS_FILE}`);
 });
 
 client.on(Events.MessageCreate, (message) => {
-  if (!message.guild || message.author.bot) return;
+  if (maintenanceMode || !message.guild || message.author.bot) return;
   const settings = getSettings(message.guild.id);
   if (
     !settings.textChannelId ||
@@ -269,44 +355,108 @@ client.on(Events.InteractionCreate, async (interaction) => {
   const guildId = interaction.guildId;
   const settings = getSettings(guildId);
   try {
+    if (maintenanceMode && !["help", "maintenance"].includes(interaction.commandName))
+      return maintenanceReply(interaction);
     switch (interaction.commandName) {
+      case "help": {
+        const maintenanceStatus = maintenanceMode
+          ? `**メンテナンス中**\n${maintenanceMessage}`
+          : `**稼働中**\n遅延: **${getLatencyMs()} ms**`;
+        return embedReply(
+          interaction,
+          "VOICEVOX読み上げBot",
+          `${maintenanceStatus}\n\n` +
+            "`/join` 接続\n" +
+            "`/leave` 切断\n" +
+            "`/say` 手動読み上げ\n" +
+            "`/skip` 現在の読み上げをスキップ\n" +
+            "`/stop` 再生と待機キューを停止\n" +
+            "`/queue` 状態と待機キューを確認\n" +
+            "`/voices` 話者一覧\n" +
+            "`/voice` 話者を変更\n" +
+            "`/setchannel` 自動読み上げチャンネルを設定\n" +
+            "`/nickname` 投稿者名の読み上げを設定\n" +
+            "`/maintenance` 全Botのメンテナンス状態を変更",
+          { ephemeral: true },
+        );
+      }
+      case "maintenance": {
+        if (!canManageGuild(interaction))
+          return embedReply(
+            interaction,
+            "権限がありません",
+            "メンテナンス状態の変更にはサーバー管理権限が必要です。",
+            { ephemeral: true, color: 0xed4245 },
+          );
+        const enabled = interaction.options.getBoolean("enabled", true);
+        const message = interaction.options.getString("message")?.trim() || maintenanceMessage;
+        await saveMaintenanceState(enabled, message, interaction.user.tag);
+        return embedReply(
+          interaction,
+          enabled ? "メンテナンスを開始しました" : "メンテナンスを終了しました",
+          enabled
+            ? `共有状態ファイルを更新しました。全Botが約5秒以内にメンテナンス状態へ切り替わります。\n案内: ${message}`
+            : "共有状態ファイルを更新しました。全Botが約5秒以内に通常状態へ戻ります。",
+          { ephemeral: true, color: enabled ? 0xfee75c : 0x57f287 },
+        );
+      }
       case "join": {
         const channel = getUserVoiceChannel(interaction);
         if (!channel)
-          return embedReply(interaction, "接続できません", "先にボイスチャンネルへ参加してね。", {
-            ephemeral: true,
-            color: 0xed4245,
-          });
+          return embedReply(
+            interaction,
+            "接続できません",
+            "先にボイスチャンネルへ参加してください。",
+            {
+              ephemeral: true,
+              color: 0xed4245,
+            },
+          );
         await interaction.deferReply();
         await connectToChannel(channel);
         return interaction.editReply({
           embeds: [
             makeEmbed(
-              "ボイスチャンネルに接続しました",
-              `🔊 **${channel.name}** で読み上げを開始できます。`,
+              "接続しました",
+              `ボイスチャンネル **${channel.name}** に接続しました。` +
+                " `/setchannel` で対象チャンネルを設定すると、自動読み上げを開始できます。",
               0x57f287,
             ),
           ],
         });
       }
       case "leave": {
+        const connection = getVoiceConnection(guildId);
+        const queue = getQueue(guildId);
+        if (!connection && queue.length === 0 && !processingGuilds.has(guildId))
+          return embedReply(
+            interaction,
+            "未接続です",
+            "Botはボイスチャンネルに接続していません。",
+            {
+              ephemeral: true,
+              color: 0xed4245,
+            },
+          );
         invalidateQueue(guildId);
-        getVoiceConnection(guildId)?.destroy();
-        getQueue(guildId).length = 0;
+        connection?.destroy();
+        queue.length = 0;
         getPlayer(guildId).stop(true);
         return embedReply(
           interaction,
-          "退出しました",
-          "👋 ボイスチャンネルから退出し、待機中のキューを消去しました。",
+          "切断しました",
+          "ボイスチャンネルから切断し、待機中の読み上げを消去しました。",
           { color: 0xfee75c },
         );
       }
       case "say": {
         if (!getVoiceConnection(guildId))
-          return embedReply(interaction, "読み上げできません", "先に `/join` でBotを接続してね。", {
-            ephemeral: true,
-            color: 0xed4245,
-          });
+          return embedReply(
+            interaction,
+            "読み上げできません",
+            "Botが未接続です。先に `/join` を実行してください。",
+            { ephemeral: true, color: 0xed4245 },
+          );
         const result = enqueue(
           guildId,
           interaction.options.getString("text", true),
@@ -316,7 +466,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return embedReply(
             interaction,
             "キューが満杯です",
-            `現在の上限は${MAX_QUEUE_LENGTH}件です。再生が進んでからもう一度実行してください。`,
+            `待機キューの上限は${MAX_QUEUE_LENGTH}件です。再生が進んでからもう一度実行してください。`,
             { ephemeral: true, color: 0xed4245 },
           );
         if (!result.added)
@@ -327,12 +477,19 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return embedReply(
           interaction,
           "読み上げキューに追加しました",
-          `📥 待機中: **${result.size}件**`,
+          `待機中の読み上げ: **${result.size}件**`,
           { ephemeral: true, color: 0x57f287 },
         );
       }
       case "skip": {
         const player = getPlayer(guildId);
+        if (!getVoiceConnection(guildId))
+          return embedReply(
+            interaction,
+            "スキップできません",
+            "Botが未接続です。先に `/join` を実行してください。",
+            { ephemeral: true, color: 0xed4245 },
+          );
         if (player.state.status === AudioPlayerStatus.Idle && !processingGuilds.has(guildId))
           return embedReply(
             interaction,
@@ -345,30 +502,46 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return embedReply(
           interaction,
           "スキップしました",
-          "⏭️ 現在の読み上げをスキップしました。",
+          `現在の読み上げをスキップしました。待機中: **${getQueue(guildId).length}件**`,
           { color: 0xfee75c },
         );
       }
-      case "stop":
+      case "stop": {
+        const queue = getQueue(guildId);
+        const player = getPlayer(guildId);
+        const active =
+          queue.length > 0 ||
+          processingGuilds.has(guildId) ||
+          player.state.status !== AudioPlayerStatus.Idle;
+        if (!active)
+          return embedReply(
+            interaction,
+            "停止する読み上げはありません",
+            "現在、再生中または待機中の読み上げはありません。",
+            { ephemeral: true },
+          );
         invalidateQueue(guildId);
-        getQueue(guildId).length = 0;
-        getPlayer(guildId).stop(true);
+        queue.length = 0;
+        player.stop(true);
         return embedReply(
           interaction,
           "読み上げを停止しました",
-          "⏹️ 再生中の音声と待機キューを停止・消去しました。",
+          "再生中の音声と待機キューを停止・消去しました。",
           { color: 0xfee75c },
         );
+      }
       case "queue": {
         const queue = getQueue(guildId);
+        const player = getPlayer(guildId);
         const current =
-          getPlayer(guildId).state.status === AudioPlayerStatus.Idle &&
-          !processingGuilds.has(guildId)
-            ? "現在、再生中の音声はありません。"
-            : "現在、音声を再生中です。";
+          player.state.status !== AudioPlayerStatus.Idle
+            ? "状態: 再生中"
+            : processingGuilds.has(guildId)
+              ? "状態: 読み上げを準備中"
+              : "状態: 再生していません";
         const lines = queue.slice(0, 10).map((job, i) => `${i + 1}. ${job.text.slice(0, 120)}`);
         const description =
-          [current, ...lines].join("\n") +
+          [current, `待機中: ${queue.length}件`, ...lines].join("\n") +
           (queue.length > 10 ? `\nほか ${queue.length - 10} 件` : "");
         return embedReply(interaction, "読み上げキュー", description, { ephemeral: true });
       }
@@ -383,7 +556,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
           return embedEdit(
             interaction,
             "話者が見つかりません",
-            `話者ID **${speakerId}** が見つかりません。まず \/voices で確認してね。`,
+            `話者ID **${speakerId}** が見つかりません。まず "/voices" で利用可能なIDを確認してください。`,
             0xed4245,
           );
         settings.speakerId = speakerId;
@@ -391,7 +564,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return embedEdit(
           interaction,
           "話者を変更しました",
-          `🎙️ **${match.name}（${speakerId}）** を使用します。`,
+          `**${match.name}（${speakerId}）** を使用します。`,
           0x57f287,
         );
       }
@@ -426,7 +599,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return embedReply(
           interaction,
           "自動読み上げを設定しました",
-          `📣 対象チャンネル: <#${settings.textChannelId}>`,
+          `対象チャンネル: <#${settings.textChannelId}>。Botが接続中の間、そのチャンネルの投稿を読み上げます。`,
           { color: 0x57f287 },
         );
       }
@@ -444,8 +617,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
           interaction,
           "名前読み上げ設定を更新しました",
           settings.readNickname
-            ? "👤 投稿者の表示名も読み上げます。"
-            : "👤 投稿者の表示名は読み上げません。",
+            ? "投稿者の表示名も読み上げます。"
+            : "投稿者の表示名は読み上げません。",
           { color: 0x57f287 },
         );
       }
@@ -482,6 +655,8 @@ httpServer = http.createServer((request, response) => {
 
 async function shutdown(signal) {
   console.log(`${signal} を受信しました。終了します。`);
+  if (presenceTimer) clearInterval(presenceTimer);
+  if (maintenanceTimer) clearInterval(maintenanceTimer);
   for (const [guildId] of guildPlayers) {
     getPlayer(guildId).stop(true);
     getVoiceConnection(guildId)?.destroy();
@@ -494,6 +669,7 @@ async function shutdown(signal) {
 
 (async () => {
   await settingsStore.load();
+  await refreshMaintenanceState();
   httpServer.listen(PORT, () => console.log(`Health endpoint: http://127.0.0.1:${PORT}/health`));
   await client.login(TOKEN);
 })();

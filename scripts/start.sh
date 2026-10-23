@@ -16,7 +16,7 @@ if [[ ! -f .env ]]; then
   exit 1
 fi
 
-for required in DISCORD_TOKEN CLIENT_ID GUILD_ID; do
+for required in DISCORD_TOKEN CLIENT_ID; do
   value=$(grep -E "^${required}=" .env | tail -n1 | cut -d= -f2- || true)
   if [[ -z "$value" ]]; then
     echo ".env の ${required} が未設定です。" >&2

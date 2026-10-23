@@ -13,10 +13,10 @@ COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY src ./src
 COPY .env.example ./
-RUN mkdir -p /app/data && chown -R node:node /app
+RUN mkdir -p /app/data /app/maintenance && chown -R node:node /app
 
 USER node
-VOLUME ["/app/data"]
+VOLUME ["/app/data", "/app/maintenance"]
 EXPOSE 3000
 
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]

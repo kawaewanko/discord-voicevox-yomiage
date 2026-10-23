@@ -1,3 +1,33 @@
+x-bot-environment: &bot-environment
+  NODE_ENV: production
+  VOICEVOX_URL: http://voicevox:50021
+  DATA_DIR: /app/data
+  MAINTENANCE_STATE_FILE: /app/maintenance/maintenance-state.json
+  PORT: 3000
+
+x-bot-common: &bot-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: ${BOT_IMAGE:-discord-voicevox-yomiage/bot:local}
+  restart: unless-stopped
+  init: true
+  env_file:
+    - .env
+  environment: *bot-environment
+  depends_on:
+    voicevox:
+      condition: service_healthy
+  healthcheck:
+    test:
+      - CMD-SHELL
+      - >-
+        node -e "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 20s
+
 services:
   voicevox:
     build:
@@ -19,36 +49,185 @@ services:
       start_period: 60s
 
   bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: ${BOT_IMAGE:-discord-voicevox-yomiage/bot:local}
-    restart: unless-stopped
-    init: true
-    env_file:
-      - .env
-    environment:
-      NODE_ENV: production
-      VOICEVOX_URL: http://voicevox:50021
-      DATA_DIR: /app/data
-      PORT: 3000
-    depends_on:
-      voicevox:
-        condition: service_healthy
+    <<: *bot-common
     ports:
       - "${HEALTH_PORT:-3000}:3000"
     volumes:
       - bot-data:/app/data
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          node -e "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 20s
+      - maintenance-state:/app/maintenance
+
+  bot-1:
+    <<: *bot-common
+    profiles: ["bot-1"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_1_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_1_CLIENT_ID:-}
+      GUILD_ID: ${BOT_1_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_1_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_1_HEALTH_PORT:-3001}:3000"
+    volumes:
+      - bot-data-1:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-2:
+    <<: *bot-common
+    profiles: ["bot-2"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_2_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_2_CLIENT_ID:-}
+      GUILD_ID: ${BOT_2_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_2_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_2_HEALTH_PORT:-3002}:3000"
+    volumes:
+      - bot-data-2:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-3:
+    <<: *bot-common
+    profiles: ["bot-3"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_3_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_3_CLIENT_ID:-}
+      GUILD_ID: ${BOT_3_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_3_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_3_HEALTH_PORT:-3003}:3000"
+    volumes:
+      - bot-data-3:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-4:
+    <<: *bot-common
+    profiles: ["bot-4"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_4_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_4_CLIENT_ID:-}
+      GUILD_ID: ${BOT_4_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_4_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_4_HEALTH_PORT:-3004}:3000"
+    volumes:
+      - bot-data-4:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-5:
+    <<: *bot-common
+    profiles: ["bot-5"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_5_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_5_CLIENT_ID:-}
+      GUILD_ID: ${BOT_5_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_5_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_5_HEALTH_PORT:-3005}:3000"
+    volumes:
+      - bot-data-5:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-6:
+    <<: *bot-common
+    profiles: ["bot-6"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_6_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_6_CLIENT_ID:-}
+      GUILD_ID: ${BOT_6_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_6_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_6_HEALTH_PORT:-3006}:3000"
+    volumes:
+      - bot-data-6:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-7:
+    <<: *bot-common
+    profiles: ["bot-7"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_7_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_7_CLIENT_ID:-}
+      GUILD_ID: ${BOT_7_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_7_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_7_HEALTH_PORT:-3007}:3000"
+    volumes:
+      - bot-data-7:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-8:
+    <<: *bot-common
+    profiles: ["bot-8"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_8_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_8_CLIENT_ID:-}
+      GUILD_ID: ${BOT_8_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_8_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_8_HEALTH_PORT:-3008}:3000"
+    volumes:
+      - bot-data-8:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-9:
+    <<: *bot-common
+    profiles: ["bot-9"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_9_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_9_CLIENT_ID:-}
+      GUILD_ID: ${BOT_9_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_9_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_9_HEALTH_PORT:-3009}:3000"
+    volumes:
+      - bot-data-9:/app/data
+      - maintenance-state:/app/maintenance
+
+  bot-10:
+    <<: *bot-common
+    profiles: ["bot-10"]
+    environment:
+      <<: *bot-environment
+      DISCORD_TOKEN: ${BOT_10_DISCORD_TOKEN:-}
+      CLIENT_ID: ${BOT_10_CLIENT_ID:-}
+      GUILD_ID: ${BOT_10_GUILD_ID:-}
+      MAINTENANCE_MODE: ${BOT_10_MAINTENANCE_MODE:-false}
+    ports:
+      - "${BOT_10_HEALTH_PORT:-3010}:3000"
+    volumes:
+      - bot-data-10:/app/data
+      - maintenance-state:/app/maintenance
 
 volumes:
   bot-data:
     name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-data
+  bot-data-1:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-1-data
+  bot-data-2:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-2-data
+  bot-data-3:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-3-data
+  bot-data-4:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-4-data
+  bot-data-5:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-5-data
+  bot-data-6:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-6-data
+  bot-data-7:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-7-data
+  bot-data-8:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-8-data
+  bot-data-9:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-9-data
+  bot-data-10:
+    name: ${COMPOSE_PROJECT_NAME:-discord-voicevox-yomiage}-bot-10-data
+  maintenance-state:
+    name: ${MAINTENANCE_STATE_VOLUME:-discord-voicevox-yomiage-maintenance}
