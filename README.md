@@ -49,7 +49,7 @@ chmod 600 .env
 # .envへDISCORD_TOKEN、CLIENT_IDを設定（GUILD_IDは任意）
 ```
 
-`start.sh`は、`.env`の必須項目検証、Compose設定検証、BotとVOICEVOXのイメージビルド、VOICEVOXの起動待ち、Bot起動、最大120秒のヘルスチェックまで自動で行います。
+`start.sh`は、`.env`の必須項目検証、Compose設定検証、BotとVOICEVOXのイメージビルド、VOICEVOXの起動待ち、Bot起動、Guild IDが設定されている場合のDiscordコマンド登録、最大120秒のヘルスチェックまで自動で行います。
 
 VOICEVOXは公式のCPUイメージをベースに、ヘルスチェック用の`curl`を追加したローカルイメージとしてビルドします。ARM64環境では`.env`の`VOICEVOX_BASE_IMAGE`を`voicevox/voicevox_engine:cpu-arm64-latest`へ変更してください。
 
@@ -75,7 +75,7 @@ Composeのプロファイル`bot-1`〜`bot-10`と、ホストポート`3001`〜`
 
 ### 📋 コマンドを登録
 
-Compose環境では次のコマンドでギルドコマンドを登録します。
+Compose環境では`start.sh`が`GUILD_ID`設定時にコマンドを自動登録します。手動で登録する場合は次のコマンドを実行します。
 
 ```bash
 docker compose run --rm --no-deps bot node src/deploy-commands.js

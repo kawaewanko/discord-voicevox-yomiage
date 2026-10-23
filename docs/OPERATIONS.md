@@ -12,7 +12,7 @@ cd discord-voicevox-yomiage
 
 `setup.sh`は`.env`を対話式に作成し、BotトークンでDiscord APIから参加サーバーを半自動検出する。設定だけ行う場合は`./scripts/setup.sh --no-start`、Guild IDを直接指定する場合は`./scripts/setup.sh --guild-id <ID> --no-start`を使う。
 
-`start.sh`は、必須環境変数とCompose設定の検証、Botイメージのビルド、VOICEVOXのヘルスチェック完了待ち、Bot起動、最大120秒のBot `/health` 確認を順番に実行する。Botは`restart: unless-stopped`で自動再起動される。
+`start.sh`は、必須環境変数とCompose設定の検証、Botイメージのビルド、VOICEVOXのヘルスチェック完了待ち、Bot起動、`GUILD_ID`設定時のDiscordコマンド登録、最大120秒のBot `/health` 確認を順番に実行する。Botは`restart: unless-stopped`で自動再起動される。
 
 VOICEVOXは公式のCPUイメージをベースに、ヘルスチェック用の`curl`を追加したイメージとしてビルドする。ARM64ホストでは`.env`の`VOICEVOX_BASE_IMAGE`を`voicevox/voicevox_engine:cpu-arm64-latest`へ変更する。
 

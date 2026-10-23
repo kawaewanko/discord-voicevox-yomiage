@@ -48,6 +48,7 @@ done
 
 docker compose "${profiles[@]}" config --quiet
 docker compose "${profiles[@]}" up -d --build "${services[@]}"
+./scripts/deploy-multi.sh "$count"
 
 echo "${count}体のBotを起動しました。"
 for index in $(seq 1 "$count"); do

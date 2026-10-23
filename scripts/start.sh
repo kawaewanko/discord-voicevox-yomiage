@@ -29,11 +29,18 @@ docker compose config --quiet
 mkdir -p data
 chmod 700 data
 
-echo "[1/3] イメージをビルドします..."
+echo "[1/4] イメージをビルドします..."
 docker compose build --pull bot voicevox
-echo "[2/3] VOICEVOXとBotを起動します..."
+echo "[2/4] VOICEVOXとBotを起動します..."
 docker compose up -d voicevox bot
-echo "[3/3] サービス状態を確認します..."
+guild_id=$(grep -E '^GUILD_ID=' .env | tail -n1 | cut -d= -f2- || true)
+if [[ -n "$guild_id" ]]; then
+  echo "[3/4] DiscordコマンドをGuildへ登録します..."
+  docker compose run --rm --no-deps bot node src/deploy-commands.js "$guild_id"
+else
+  echo "[3/4] GUILD_ID未設定のためDiscordコマンド登録をスキップします。"
+fi
+echo "[4/4] サービス状態を確認します..."
 docker compose ps
 
 for attempt in {1..60}; do
